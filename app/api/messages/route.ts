@@ -21,7 +21,12 @@ export async function GET() {
     const parsedMessages = messages.map((msg: string) => JSON.parse(msg))
     // Sort by timestamp, newest first, then reverse for display order
     const sortedMessages = parsedMessages.sort((a, b) => a.timestamp - b.timestamp)
-    return NextResponse.json(sortedMessages)
+    const res = NextResponse.json(sortedMessages)
+    res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+    res.headers.set("Pragma", "no-cache")
+    res.headers.set("Expires", "0")
+    res.headers.set("Surrogate-Control", "no-store")
+    return res
   } catch (error) {
     console.error("Error reading messages from Redis:", error)
     return NextResponse.json([])

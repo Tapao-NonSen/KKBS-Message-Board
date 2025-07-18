@@ -38,7 +38,7 @@ export default function LedgerOfMemoriesDisplay() {
 
   const fetchMessages = async () => {
     try {
-      const response = await fetch("/api/messages")
+      const response = await fetch(`/api/messages?timestamp=${Date.now()}`)
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
@@ -195,7 +195,7 @@ export default function LedgerOfMemoriesDisplay() {
                           <img
                             src={currentMessage.content || "/placeholder.svg"}
                             alt="User submission"
-                            className="max-h-[420px] max-w-full w-auto h-auto mx-auto rounded-2xl shadow-2xl border border-slate-600/30 object-contain"
+                            className="max-h-[500px] max-w-full w-auto h-auto mx-auto rounded-2xl shadow-2xl border border-slate-600/30 object-contain"
                           />
                         </div>
                       </div>
