@@ -1,4 +1,4 @@
-# Ledger of Memories (BACC Alumni Message Wall)
+# Ledger of Memories (Message Wall)
 
 A Next.js app for displaying and submitting messages and images for the KKBS at Khon Kaen University.
 
