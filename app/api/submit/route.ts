@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import Redis from 'ioredis'
 import dotenv from "dotenv"
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3"
+import { google } from 'googleapis'
 dotenv.config()
 
 interface Message {
@@ -13,17 +14,28 @@ interface Message {
   timestamp: number
 }
 
+// Environment variables
+const IMAGE_MODE = process.env.IMAGE_MODE || 'digitalocean' // 'digitalocean' or 'googledrive'
+
+// DigitalOcean Spaces configuration
 const DO_SPACES_ENDPOINT = process.env.DO_SPACES_ENDPOINT as string;
 const DO_SPACES_KEY = process.env.DO_SPACES_KEY as string;
 const DO_SPACES_SECRET = process.env.DO_SPACES_SECRET as string;
 const DO_SPACES_BUCKET = process.env.DO_SPACES_BUCKET as string;
 const DO_SPACES_REGION = process.env.DO_SPACES_REGION as string;
 
+// Google Drive configuration
+const GOOGLE_DRIVE_CLIENT_ID = process.env.GOOGLE_DRIVE_CLIENT_ID as string;
+const GOOGLE_DRIVE_CLIENT_SECRET = process.env.GOOGLE_DRIVE_CLIENT_SECRET as string;
+const GOOGLE_DRIVE_REFRESH_TOKEN = process.env.GOOGLE_DRIVE_REFRESH_TOKEN as string;
+const GOOGLE_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID as string;
+
 const redis = new Redis(process.env.REDIS_URL as string, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
 });
 
+// Initialize DigitalOcean Spaces client
 const s3Client = new S3Client({
   region: DO_SPACES_REGION,
   endpoint: DO_SPACES_ENDPOINT,
@@ -33,9 +45,82 @@ const s3Client = new S3Client({
   },
 })
 
+// Initialize Google Drive client
+const getGoogleDriveClient = () => {
+  const oauth2Client = new google.auth.OAuth2(
+    GOOGLE_DRIVE_CLIENT_ID,
+    GOOGLE_DRIVE_CLIENT_SECRET
+  );
+  
+  oauth2Client.setCredentials({
+    refresh_token: GOOGLE_DRIVE_REFRESH_TOKEN,
+  });
+  
+  return google.drive({ version: 'v3', auth: oauth2Client });
+};
+
+// Upload to DigitalOcean Spaces
+async function uploadToDigitalOcean(image: File, fileName: string): Promise<string> {
+  const bytes = await image.arrayBuffer()
+  const buffer = Buffer.from(bytes)
+  
+  const uploadParams = {
+    Bucket: DO_SPACES_BUCKET,
+    Key: fileName,
+    Body: buffer,
+    ContentType: image.type,
+    ACL: "public-read" as const,
+  }
+  
+  await s3Client.send(new PutObjectCommand(uploadParams))
+  const publicUrl = `${DO_SPACES_ENDPOINT.replace(/\/$/, "")}/${DO_SPACES_BUCKET}/${fileName}`
+  
+  console.log("API: Image uploaded to DigitalOcean Spaces:", publicUrl)
+  return publicUrl
+}
+
+// Upload to Google Drive
+async function uploadToGoogleDrive(image: File, fileName: string): Promise<string> {
+  const drive = getGoogleDriveClient()
+  const bytes = await image.arrayBuffer()
+  const buffer = Buffer.from(bytes)
+  
+  const fileMetadata = {
+    name: fileName,
+    parents: [GOOGLE_DRIVE_FOLDER_ID],
+  };
+  
+  const media = {
+    mimeType: image.type,
+    body: buffer,
+  };
+  
+  const file = await drive.files.create({
+    requestBody: fileMetadata,
+    media: media,
+    fields: 'id,webViewLink',
+  });
+  
+  // Make the file publicly accessible
+  await drive.permissions.create({
+    fileId: file.data.id!,
+    requestBody: {
+      role: 'reader',
+      type: 'anyone',
+    },
+  });
+  
+  // Get the direct download link
+  const directLink = `https://drive.google.com/uc?export=view&id=${file.data.id}`
+  
+  console.log("API: Image uploaded to Google Drive:", directLink)
+  return directLink
+}
+
 export async function POST(request: NextRequest) {
   try {
     console.log("API: Received POST request")
+    console.log("API: Image mode:", IMAGE_MODE)
 
     const formData = await request.formData()
     const name = formData.get("name") as string
@@ -94,30 +179,39 @@ export async function POST(request: NextRequest) {
     }
 
     if (hasImage) {
-      console.log("API: Processing image upload to DigitalOcean Spaces")
-      const bytes = await image.arrayBuffer()
-      const buffer = Buffer.from(bytes)
       const fileExtension = image.name.split(".").pop() || "jpg"
       const fileName = `${uuidv4()}.${fileExtension}`
-      // Upload to DigitalOcean Spaces
-      const uploadParams = {
-        Bucket: DO_SPACES_BUCKET,
-        Key: fileName,
-        Body: buffer,
-        ContentType: image.type,
-        ACL: "public-read" as const,
+      
+      let publicUrl: string
+      
+      if (IMAGE_MODE === 'googledrive') {
+        console.log("API: Processing image upload to Google Drive")
+        
+        // Validate Google Drive configuration
+        if (!GOOGLE_DRIVE_CLIENT_ID || !GOOGLE_DRIVE_CLIENT_SECRET || !GOOGLE_DRIVE_REFRESH_TOKEN || !GOOGLE_DRIVE_FOLDER_ID) {
+          console.error("API: Google Drive configuration missing")
+          return NextResponse.json({ error: "Google Drive configuration is incomplete" }, { status: 500 })
+        }
+        
+        publicUrl = await uploadToGoogleDrive(image, fileName)
+      } else {
+        console.log("API: Processing image upload to DigitalOcean Spaces")
+        
+        // Validate DigitalOcean configuration
+        if (!DO_SPACES_ENDPOINT || !DO_SPACES_KEY || !DO_SPACES_SECRET || !DO_SPACES_BUCKET || !DO_SPACES_REGION) {
+          console.error("API: DigitalOcean Spaces configuration missing")
+          return NextResponse.json({ error: "DigitalOcean Spaces configuration is incomplete" }, { status: 500 })
+        }
+        
+        publicUrl = await uploadToDigitalOcean(image, fileName)
       }
-      await s3Client.send(new PutObjectCommand(uploadParams))
-      // Construct the public URL
-      const publicUrl = `${DO_SPACES_ENDPOINT.replace(/\/$/, "")}/${DO_SPACES_BUCKET}/${fileName}`
+      
       newMessage.content = publicUrl
-      console.log("API: Image uploaded to", publicUrl)
     } else {
       newMessage.content = message.trim()
       console.log("API: Text message processed")
     }
 
-    // Instead of reading/writing messages.json, use Redis
     // Save the new message to Redis
     await redis.lpush('messages', JSON.stringify(newMessage))
     console.log("API: Message saved to Redis successfully")
