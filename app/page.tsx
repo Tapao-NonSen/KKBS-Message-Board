@@ -218,15 +218,48 @@ export default function LedgerOfMemoriesDisplay() {
           {/* Queue Indicator */}
           {queue.length > 1 && (
             <div className="mt-8 flex justify-center gap-3">
-              {queue.map((_, index) => (
-                <div
-                  key={index}
-                  className={`h-2 rounded-full transition-all duration-500 ${index === currentIndex
-                      ? "w-12 bg-gradient-to-r from-blue-400 to-cyan-400 shadow-lg"
-                      : "w-2 bg-slate-600 hover:bg-slate-500"
-                    }`}
-                />
-              ))}
+              {(() => {
+                // Limit indicator to 5
+                const maxIndicators = 5;
+                let indicators = [];
+                if (queue.length <= maxIndicators) {
+                  indicators = queue.map((_, index) => index);
+                } else {
+                  // Show first, prev, current, next, last
+                  const first = 0;
+                  const last = queue.length - 1;
+                  const prev = Math.max(currentIndex - 1, first + 1);
+                  const next = Math.min(currentIndex + 1, last - 1);
+
+                  if (currentIndex <= 1) {
+                    // Show first 4 and last
+                    indicators = [0, 1, 2, 3, last];
+                  } else if (currentIndex >= last - 1) {
+                    // Show first and last 4
+                    indicators = [first, last - 3, last - 2, last - 1, last];
+                  } else {
+                    // Show first, prev, current, next, last
+                    indicators = [first, prev, currentIndex, next, last];
+                  }
+                }
+                // Remove duplicates and sort
+                indicators = Array.from(new Set(indicators)).sort((a, b) => a - b);
+
+                return indicators.map((index, i) => (
+                  <div
+                    key={index}
+                    className={`h-2 rounded-full transition-all duration-500 ${index === currentIndex
+                        ? "w-12 bg-gradient-to-r from-blue-400 to-cyan-400 shadow-lg"
+                        : "w-2 bg-slate-600 hover:bg-slate-500"
+                      }`}
+                  >
+                    {/* Show ellipsis if there is a gap */}
+                    {i > 0 && indicators[i] - indicators[i - 1] > 1 && (
+                      <span className="mx-1 text-slate-400 text-lg align-middle">…</span>
+                    )}
+                  </div>
+                ));
+              })()}
             </div>
           )}
 
